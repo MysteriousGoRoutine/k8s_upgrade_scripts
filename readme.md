@@ -1,5 +1,49 @@
 # Kubernetes Worker Nodes Upgrade Guide
 
+## Table of Contents
+
+1. [Prerequisites](#prerequisites)
+2. [Overview of Methods](#overview-of-methods)
+3. [Method 1: Quick Script (Recommended)](#method-1-quick-script-recommended)
+   - [Basic Worker Upgrade](#basic-worker-upgrade)
+   - [With Options](#with-options)
+4. [Method 2: Main Script with --workers-only](#method-2-main-script-with---workers-only)
+   - [Basic Usage](#basic-usage)
+   - [All Available Options](#all-available-options)
+5. [Method 3: Sequential Upgrade (Safest)](#method-3-sequential-upgrade-safest)
+6. [Method 4: Local Upgrade (Manual)](#method-4-local-upgrade-manual)
+7. [Process Flow](#process-flow)
+   - [Automatic Process (Methods 1-3)](#automatic-process-methods-1-3)
+   - [Manual Process (Method 4)](#manual-process-method-4)
+8. [Important Options](#important-options)
+   - [--workers-only](#--workers-only)
+   - [--skip-drain](#--skip-drain)
+   - [--skip-verification](#--skip-verification)
+   - [--dry-run](#--dry-run)
+9. [Troubleshooting](#troubleshooting)
+   - [SSH Connection Issues](#ssh-connection-issues)
+   - [Node Not Ready After Upgrade](#node-not-ready-after-upgrade)
+   - [Drain Issues](#drain-issues)
+   - [Package Installation Issues](#package-installation-issues)
+10. [Verification After Upgrade](#verification-after-upgrade)
+    - [Quick Check](#quick-check)
+    - [Manual Verification](#manual-verification)
+11. [Best Practices](#best-practices)
+    - [1. Always Test First](#1-always-test-first)
+    - [2. Upgrade During Maintenance Window](#2-upgrade-during-maintenance-window)
+    - [3. Monitor Resource Usage](#3-monitor-resource-usage)
+    - [4. Backup Important Data](#4-backup-important-data)
+    - [5. Gradual Approach](#5-gradual-approach)
+12. [Common Scenarios](#common-scenarios)
+    - [Production Environment](#production-environment)
+    - [Development Environment](#development-environment)
+    - [Testing Environment](#testing-environment)
+13. [Rollback Procedure](#rollback-procedure)
+14. [Safety Considerations](#safety-considerations)
+15. [Quick Reference](#quick-reference)
+
+---
+
 This guide covers different methods to upgrade only the worker nodes in your Kubernetes cluster using the provided scripts.
 
 ## Prerequisites
