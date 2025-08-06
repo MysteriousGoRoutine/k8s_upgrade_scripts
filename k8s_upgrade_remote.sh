@@ -129,11 +129,23 @@ REMOTE MODE EXAMPLES:
     $0 --version 1.33.0-1.1 --remote --ssh-user ubuntu \\
        --control-plane 10.0.1.10 --workers 10.0.1.11,10.0.1.12 --workers-only
 
+    # Example of using the script to upgrade a remote cluster
+    $0 --version 1.33.3-1.1 \\
+       --remote \\
+       --ssh-user ubuntu \\
+       --control-plane leader-ld \\
+       --workers worker-ld-1,worker-ld-2,worker-ld-3 \\
+       --auto-approve
 EOF
 }
 
 # Parse command line arguments
 parse_args() {
+    if [[ $# -eq 0 ]]; then
+        show_help
+        exit 1
+    fi
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             -v|--version)
@@ -234,7 +246,7 @@ validate_inputs() {
             log_error "SSH user is required for remote mode. Use --ssh-user"
             exit 1
         fi
-        
+
         if [[ -z "$CONTROL_PLANE_HOST" ]]; then
             log_error "Control plane host is required for remote mode. Use --control-plane"
             exit 1
@@ -262,14 +274,14 @@ validate_inputs() {
 test_ssh_connection() {
     local host="$1"
     local description="$2"
-    
+
     log_remote "Testing SSH connection to $host ($description)..."
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         log_warning "[DRY-RUN] Would test SSH connection to $host"
         return 0
     fi
-    
+
     if ssh -o ConnectTimeout="$SSH_TIMEOUT" -o BatchMode=yes -o StrictHostKeyChecking=no \
            "$SSH_USER@$host" "echo 'SSH connection successful'" >/dev/null 2>&1; then
         log_success "SSH connection to $host successful"
@@ -286,19 +298,19 @@ execute_remote_cmd() {
     local cmd="$2"
     local description="$3"
     local use_sudo="${4:-true}"
-    
+
     log_remote "$description on $host"
-    
+
     local full_cmd="$cmd"
     if [[ "$use_sudo" == "true" ]]; then
         full_cmd="sudo $cmd"
     fi
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "${YELLOW}[DRY-RUN]${NC} Would execute on $host: $full_cmd"
         return 0
     fi
-    
+
     if ssh -o ConnectTimeout="$SSH_TIMEOUT" -o StrictHostKeyChecking=no \
            "$SSH_USER@$host" "$full_cmd"; then
         log_success "$description completed on $host"
@@ -317,19 +329,19 @@ execute_remote_cmd_soft() {
     local cmd="$2"
     local description="$3"
     local use_sudo="${4:-true}"
-    
+
     log_remote "$description on $host"
-    
+
     local full_cmd="$cmd"
     if [[ "$use_sudo" == "true" ]]; then
         full_cmd="sudo $cmd"
     fi
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "${YELLOW}[DRY-RUN]${NC} Would execute on $host: $full_cmd"
         return 0
     fi
-    
+
     if ssh -o ConnectTimeout="$SSH_TIMEOUT" -o StrictHostKeyChecking=no \
            "$SSH_USER@$host" "$full_cmd"; then
         log_success "$description completed on $host"
@@ -343,14 +355,14 @@ execute_remote_cmd_soft() {
 # Copy script to remote host
 copy_script_to_remote() {
     local host="$1"
-    
+
     log_remote "Copying upgrade script to $host"
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         log_warning "[DRY-RUN] Would copy script to $host:$REMOTE_SCRIPT_PATH"
         return 0
     fi
-    
+
     if scp -o ConnectTimeout="$SSH_TIMEOUT" -o StrictHostKeyChecking=no \
            "$0" "$SSH_USER@$host:$REMOTE_SCRIPT_PATH"; then
         log_success "Script copied to $host"
@@ -367,9 +379,9 @@ execute_remote_upgrade() {
     local host="$1"
     local node_type="$2"
     local node_name="$3"
-    
+
     log_remote "Starting Kubernetes upgrade on $host (type: $node_type)"
-    
+
     # Build remote command
     local remote_cmd="$REMOTE_SCRIPT_PATH --version $K_VER --type $node_type --auto-approve"
     [[ -n "$node_name" ]] && remote_cmd="$remote_cmd --node $node_name"
@@ -378,17 +390,17 @@ execute_remote_upgrade() {
     [[ "$SKIP_DRAIN" == true ]] && remote_cmd="$remote_cmd --skip-drain"
     [[ "$SKIP_VERIFICATION" == true ]] && remote_cmd="$remote_cmd --skip-verification"
     [[ "$WORKERS_ONLY" == true ]] && remote_cmd="$remote_cmd --workers-only"
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         log_warning "[DRY-RUN] Would execute on $host: sudo $remote_cmd"
         return 0
     fi
-    
+
     # Execute upgrade
     if ssh -o ConnectTimeout="$SSH_TIMEOUT" -o StrictHostKeyChecking=no \
            "$SSH_USER@$host" "sudo $remote_cmd"; then
         log_success "Kubernetes upgrade completed on $host"
-        
+
         # Cleanup remote script
         execute_remote_cmd "$host" "rm -f $REMOTE_SCRIPT_PATH" "Cleaning up remote script" false
         return 0
@@ -415,29 +427,29 @@ remote_cluster_upgrade() {
     log "Starting remote Kubernetes cluster upgrade"
     log "Target version: $K_VER"
     log "Control plane: $CONTROL_PLANE_HOST"
-    
+
     # Safe worker hosts display
     if has_workers; then
         log "Workers: ${WORKER_HOSTS[*]}"
     else
         log "Workers: none"
     fi
-    
+
     [[ "$DRY_RUN" == true ]] && log "Mode: DRY RUN"
     [[ "$AUTO_APPROVE" == true ]] && log "Mode: AUTO APPROVE"
-    
+
     # Test SSH connections
     log "Testing SSH connectivity to all nodes..."
     test_ssh_connection "$CONTROL_PLANE_HOST" "control plane" || exit 1
-    
+
     if has_workers; then
         for worker in "${WORKER_HOSTS[@]}"; do
             [[ -n "$worker" ]] && { test_ssh_connection "$worker" "worker" || exit 1; }
         done
     fi
-    
+
     log_success "All SSH connections successful"
-    
+
     # Step 1: Upgrade control plane (unless workers-only mode)
     if [[ "$WORKERS_ONLY" == false ]]; then
         log "=== STEP 1: Upgrading Control Plane ==="
@@ -445,7 +457,7 @@ remote_cluster_upgrade() {
         copy_script_to_remote "$CONTROL_PLANE_HOST" || exit 1
         execute_remote_upgrade "$CONTROL_PLANE_HOST" "control-plane" "" || exit 1
         log_progress "Control plane upgrade completed successfully"
-        
+
         # Wait for control plane to be ready
         if [[ "$DRY_RUN" == false ]] && has_workers; then
             log "Waiting for control plane to be ready before upgrading workers..."
@@ -454,7 +466,7 @@ remote_cluster_upgrade() {
     else
         log "Skipping control plane upgrade (workers-only mode)"
     fi
-    
+
     # Step 2: Upgrade worker nodes
     if has_workers; then
         if [[ "$WORKERS_ONLY" == true ]]; then
@@ -462,35 +474,34 @@ remote_cluster_upgrade() {
         else
             log "=== STEP 2: Upgrading Worker Nodes ==="
         fi
-        
+
         for i in "${!WORKER_HOSTS[@]}"; do
             local worker="${WORKER_HOSTS[$i]}"
             [[ -z "$worker" ]] && continue
-            
-            local worker_name="worker-$i"
+
             local total_workers
             total_workers=$(get_worker_count)
-            log_progress "Upgrading worker node $((i+1))/$total_workers: $worker ($worker_name)"
-            
+            log_progress "Upgrading worker node $((i+1))/$total_workers: $worker"
+
             # Drain node before upgrade
             if [[ "$SKIP_DRAIN" == false ]]; then
-                log_progress "Draining node $worker_name before upgrade"
+                log_progress "Draining node $worker before upgrade"
                 execute_remote_cmd "$CONTROL_PLANE_HOST" \
-                    "kubectl drain $worker_name --ignore-daemonsets --delete-emptydir-data --force --timeout=300s" \
-                    "Draining node $worker_name" false
+                    "kubectl drain $worker --ignore-daemonsets --delete-emptydir-data --force --timeout=300s" \
+                    "Draining node $worker" false
             fi
-            
+
             copy_script_to_remote "$worker" || exit 1
-            execute_remote_upgrade "$worker" "worker" "$worker_name" || exit 1
-            
+            execute_remote_upgrade "$worker" "worker" "$worker" || exit 1
+
             # Uncordon node after upgrade
-            log_progress "Bringing node $worker_name back online"
+            log_progress "Bringing node $worker back online"
             execute_remote_cmd "$CONTROL_PLANE_HOST" \
-                "kubectl uncordon $worker_name" \
-                "Uncordoning node $worker_name" false
-            
-            log_progress "Worker node $worker_name upgrade completed ($((i+1))/$total_workers)"
-            
+                "kubectl uncordon $worker" \
+                "Uncordoning node $worker" false
+
+            log_progress "Worker node $worker upgrade completed ($((i+1))/$total_workers)"
+
             # Wait between worker upgrades
             if [[ "$DRY_RUN" == false && $i -lt $((total_workers - 1)) ]]; then
                 log "Waiting 30 seconds before next worker upgrade..."
@@ -498,9 +509,9 @@ remote_cluster_upgrade() {
             fi
         done
     fi
-    
+
     log_success "Remote Kubernetes cluster upgrade completed successfully!"
-    
+
     if [[ "$DRY_RUN" == false && "$SKIP_VERIFICATION" == false ]]; then
         log "Verifying cluster status..."
         verify_cluster_status
@@ -513,9 +524,9 @@ remote_cluster_upgrade() {
 execute_cmd() {
     local cmd="$1"
     local description="$2"
-    
+
     log "$description"
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "${YELLOW}[DRY-RUN]${NC} Would execute: $cmd"
     else
@@ -536,9 +547,9 @@ execute_cmd() {
 execute_cmd_soft() {
     local cmd="$1"
     local description="$2"
-    
+
     log "$description"
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "${YELLOW}[DRY-RUN]${NC} Would execute: $cmd"
         return 0
@@ -571,37 +582,37 @@ update_k8s_repository() {
     fi
 
     log "Updating Kubernetes repository configuration..."
-    
+
     local major_minor_version
     major_minor_version=$(get_major_minor_version "$K_VER")
     local new_repo_line="deb [signed-by=$K8S_KEYRING] ${K8S_REPO_BASE}v${major_minor_version}/deb/ /"
-    
+
     log "Target Kubernetes version: v$major_minor_version"
     log "New repository line: $new_repo_line"
-    
+
     # Check if kubernetes.list exists
     if [[ ! -f "$K8S_SOURCES_FILE" ]]; then
         log_warning "Kubernetes sources file does not exist: $K8S_SOURCES_FILE"
         execute_cmd "echo '$new_repo_line' > $K8S_SOURCES_FILE" "Creating Kubernetes sources file"
         return 0
     fi
-    
+
     # Read current repository configuration
     if [[ "$DRY_RUN" == false ]]; then
         local current_repo
         current_repo=$(cat "$K8S_SOURCES_FILE" 2>/dev/null || echo "")
-        
+
         if [[ -n "$current_repo" ]]; then
             log "Current repository configuration:"
             echo "  $current_repo"
-            
+
             # Extract current version from repository URL
             local current_version
             current_version=$(echo "$current_repo" | sed -n 's/.*\/v\([0-9]\+\.[0-9]\+\)\/deb\/.*/\1/p')
-            
+
             if [[ -n "$current_version" ]]; then
                 log "Current repository version: v$current_version"
-                
+
                 if [[ "$current_version" == "$major_minor_version" ]]; then
                     log_success "Repository is already configured for version v$major_minor_version"
                     return 0
@@ -613,29 +624,29 @@ update_k8s_repository() {
             fi
         fi
     fi
-    
+
     # Backup current configuration
     if [[ -f "$K8S_SOURCES_FILE" ]]; then
         execute_cmd "cp $K8S_SOURCES_FILE ${K8S_SOURCES_FILE}.backup.$(date +%Y%m%d_%H%M%S)" "Backing up current Kubernetes sources file"
     fi
-    
+
     # Update repository configuration
     execute_cmd "echo '$new_repo_line' > $K8S_SOURCES_FILE" "Updating Kubernetes repository configuration"
-    
+
     # Verify keyring exists
     if [[ "$DRY_RUN" == false && ! -f "$K8S_KEYRING" ]]; then
         log_error "Kubernetes keyring not found: $K8S_KEYRING"
         log_error "Please ensure Kubernetes repository is properly configured with GPG key"
         exit 1
     fi
-    
+
     log_success "Kubernetes repository updated successfully"
 }
 
 # Upgrade kubeadm (local execution)
 upgrade_kubeadm() {
     log "Starting kubeadm upgrade..."
-    
+
     execute_cmd "apt-mark unhold kubeadm" "Unholding kubeadm package"
     execute_cmd "apt-get update" "Updating package list"
     execute_cmd "DEBIAN_FRONTEND=noninteractive apt-get install -y kubeadm=$K_VER" "Installing kubeadm version $K_VER"
@@ -645,12 +656,12 @@ upgrade_kubeadm() {
 # Control plane specific operations (local execution)
 upgrade_control_plane() {
     log "Upgrading control plane node..."
-    
+
     update_k8s_repository
     upgrade_kubeadm
-    
+
     execute_cmd "kubeadm upgrade plan" "Checking upgrade plan"
-    
+
     # Handle interactive confirmation
     if [[ "$DRY_RUN" == false && "$AUTO_APPROVE" == false ]]; then
         log_warning "Please review the upgrade plan above."
@@ -661,17 +672,17 @@ upgrade_control_plane() {
             exit 0
         fi
     fi
-    
+
     local k8s_version
     k8s_version=$(echo "$K_VER" | sed 's/-.*$//')  # Remove package revision part
-    
+
     # Use --yes flag for non-interactive execution
     if [[ "$AUTO_APPROVE" == true || "$REMOTE_MODE" == true ]]; then
         execute_cmd "kubeadm upgrade apply v${k8s_version} --yes" "Applying cluster upgrade (auto-approved)"
     else
         execute_cmd "kubeadm upgrade apply v${k8s_version}" "Applying cluster upgrade"
     fi
-    
+
     # Upgrade kubelet and kubectl on control plane
     execute_cmd "apt-mark unhold kubelet kubectl" "Unholding kubelet and kubectl packages"
     execute_cmd "DEBIAN_FRONTEND=noninteractive apt-get install -y kubelet=$K_VER kubectl=$K_VER" "Installing kubelet and kubectl version $K_VER"
@@ -683,18 +694,18 @@ upgrade_control_plane() {
 # Worker node specific operations (local execution)
 upgrade_worker() {
     log "Upgrading worker node: $NODE"
-    
+
     # Update repository and upgrade packages on worker node
     update_k8s_repository
-    
+
     execute_cmd "apt-mark unhold kubelet kubectl kubeadm" "Unholding Kubernetes packages"
     execute_cmd "apt-get update" "Updating package list"
     execute_cmd "DEBIAN_FRONTEND=noninteractive apt-get install -y kubelet=$K_VER kubectl=$K_VER kubeadm=$K_VER" "Installing Kubernetes packages version $K_VER"
     execute_cmd "apt-mark hold kubelet kubectl kubeadm" "Holding Kubernetes packages"
-    
+
     # Upgrade node configuration
     execute_cmd "kubeadm upgrade node" "Upgrading node configuration"
-    
+
     # Restart kubelet
     execute_cmd "systemctl daemon-reload" "Reloading systemd daemon"
     execute_cmd "systemctl restart kubelet" "Restarting kubelet service"
@@ -703,7 +714,7 @@ upgrade_worker() {
 # Pre-flight checks for local execution
 preflight_checks() {
     log "Running pre-flight checks..."
-    
+
     # Check if kubectl is available for worker operations
     if [[ "$NODE_TYPE" == "worker" ]]; then
         if ! command -v kubectl &> /dev/null; then
@@ -711,7 +722,7 @@ preflight_checks() {
             exit 1
         fi
     fi
-    
+
     # Check if sources directory exists
     if [[ ! -d "$(dirname "$K8S_SOURCES_FILE")" ]]; then
         log_warning "APT sources directory does not exist: $(dirname "$K8S_SOURCES_FILE")"
@@ -719,7 +730,7 @@ preflight_checks() {
             execute_cmd "mkdir -p $(dirname "$K8S_SOURCES_FILE")" "Creating APT sources directory"
         fi
     fi
-    
+
     log_success "Pre-flight checks passed"
 }
 
@@ -732,13 +743,13 @@ local_upgrade() {
     [[ "$DRY_RUN" == true ]] && log "Mode: DRY RUN"
     [[ "$AUTO_APPROVE" == true ]] && log "Mode: AUTO APPROVE"
     [[ "$SKIP_REPO_UPDATE" == true ]] && log "Repository update: SKIPPED"
-    
+
     preflight_checks
-    
+
     if [[ "$DRY_RUN" == false ]]; then
         check_root
     fi
-    
+
     case $NODE_TYPE in
         control-plane)
             upgrade_control_plane
@@ -747,9 +758,9 @@ local_upgrade() {
             upgrade_worker
             ;;
     esac
-    
+
     log_success "Local Kubernetes upgrade process completed successfully!"
-    
+
     if [[ "$DRY_RUN" == false && "$SKIP_VERIFICATION" == false ]]; then
         verify_local_status
     elif [[ "$SKIP_VERIFICATION" == true ]]; then
@@ -760,21 +771,21 @@ local_upgrade() {
 # Verify cluster status after remote upgrade
 verify_cluster_status() {
     log "=== POST-UPGRADE VERIFICATION ==="
-    
+
     execute_remote_cmd "$CONTROL_PLANE_HOST" "kubectl get nodes -o wide" "Getting cluster nodes status" false
-    
+
     log "Checking component versions..."
     execute_remote_cmd_soft "$CONTROL_PLANE_HOST" "kubectl version --client --short 2>/dev/null || kubectl version --client" "Checking kubectl version" false
     execute_remote_cmd_soft "$CONTROL_PLANE_HOST" "kubeadm version" "Checking kubeadm version" false
-    
+
     # Test API server connectivity first
     if execute_remote_cmd_soft "$CONTROL_PLANE_HOST" "kubectl cluster-info &>/dev/null" "Testing API server connectivity" false; then
         log "Checking cluster health..."
         execute_remote_cmd_soft "$CONTROL_PLANE_HOST" "kubectl get componentstatuses 2>/dev/null || kubectl get --raw='/healthz?verbose'" "Checking cluster components" false
-        
+
         log "Checking node readiness..."
         execute_remote_cmd_soft "$CONTROL_PLANE_HOST" "kubectl get nodes --no-headers | awk '{print \$1, \$2}'" "Checking node status" false
-        
+
         if has_workers; then
             log "Checking pods status..."
             execute_remote_cmd_soft "$CONTROL_PLANE_HOST" "kubectl get pods --all-namespaces --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null || echo 'No problematic pods found'" "Checking for non-running pods" false
@@ -784,20 +795,20 @@ verify_cluster_status() {
         log "This is normal if API server is restarting after upgrade"
         log "You can run 'kubectl get nodes' manually once the API server is ready"
     fi
-    
+
     log_success "Cluster verification completed"
 }
 
 # Verify local status after upgrade
 verify_local_status() {
     log "=== POST-UPGRADE VERIFICATION ==="
-    
+
     if command -v kubectl &> /dev/null; then
         log "Checking local component versions..."
         execute_cmd_soft "kubectl version --client --short 2>/dev/null || kubectl version --client" "Checking kubectl version"
         execute_cmd_soft "kubeadm version" "Checking kubeadm version"
         execute_cmd_soft "kubelet --version" "Checking kubelet version"
-        
+
         if [[ "$NODE_TYPE" == "control-plane" ]]; then
             log "Checking cluster status..."
             if kubectl cluster-info &>/dev/null; then
@@ -814,7 +825,7 @@ verify_local_status() {
         execute_cmd_soft "kubeadm version" "Checking kubeadm version"
         execute_cmd_soft "kubelet --version" "Checking kubelet version"
     fi
-    
+
     log_success "Local verification completed"
 }
 
